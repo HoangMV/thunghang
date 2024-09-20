@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thông tin thùng hàng từ AppSheet</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.10.25/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.10.25/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.10.25/js/dataTables.bootstrap5.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f8f9fa;
+        }
+
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        #printArea {
+            display: none;
+        }
+
+        @media print {
+            @page {
+                size: 50mm 20mm;
+                margin: 0;
+            }
+
+            body {
+                margin: 0;
+                padding: 0;
+                width: 50mm;
+                height: 20mm;
+            }
+
+            #printArea {
+                display: block;
+                width: 50mm;
+                height: 20mm;
+                page-break-after: always;
+            }
+
+            .container,
+            #loading,
+            #error,
+            #dataTable_wrapper {
+                display: none !important;
+            }
+
+            .print-label {
+                width: 100%;
+                height: 100%;
+                display: flex;
+                border: 2px solid black;
+                box-sizing: border-box;
+            }
+
+            .print-label-qr {
+                flex: 0 0 auto;
+                border-right: 2px solid black;
+                padding: 2px;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                width: 19mm;
+                height: 19mm;
+            }
+
+            .print-label-qr img {
+                max-width: 18mm;
+                max-height: 18mm;
+                width: auto;
+                height: auto;
+            }
+
+            .print-label-info {
+                flex: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 14px;
+                font-weight: bold;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1 class="text-center my-4">Thông tin thùng hàng từ AppSheet</h1>
+        <div id="loading" class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Đang tải...</span>
+            </div>
+            <p>Đang tải dữ liệu...</p>
+        </div>
+        <div id="error" class="alert alert-danger" style="display: none;" role="alert"></div>
+        <table id="dataTable" class="table table-striped table-bordered" style="width:100%; display: none;">
+            <thead>
+                <tr>
+                    <th>STT</th>
+                    <th>Tên chi tiết</th>
+                    <th>Số thùng hàng</th>
+                    <th>Mã QR</th>
+                    <th>Hành động</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody">
+                <!-- Dữ liệu sẽ được thêm vào đây bằng JavaScript -->
+            </tbody>
+        </table>
+    </div>
+
+    <div id="printArea"></div>
+
+    <script>
+        const appId = '36108a99-6538-47a3-9728-1259a0bd98df';
+        const accessKey = 'V2-42Wj9-iT6wO-wMHPB-RB3FE-7o069-jIf4G-5hOAd-pZTIx';
+        const region = 'www';
+
+        function apiRequest(tableName, action, data) {
+            const apiUrl = `https://${region}.appsheet.com/api/v2/apps/${appId}/tables/${tableName}/Action`;
+            return $.ajax({
+                url: apiUrl,
+                method: 'POST',
+                headers: {
+                    'ApplicationAccessKey': accessKey,
+                    'Content-Type': 'application/json'
+                },
+                data: JSON.stringify({
+                    Action: action,
+                    Properties: {
+                        Locale: 'vi-VN',
+                        Timezone: 'Asia/Ho_Chi_Minh'
+                    },
+                    ...data
+                })
+            });
+        }
+
+        function loadData() {
+            showLoading();
+            apiRequest('danh_sach_thung', 'Find', { Rows: [], Properties: { Selector: 'Filter(danh_sach_thung, true)' } })
+                .then(data => {
+                    processData(data);
+                    hideLoading();
+                })
+                .catch(error => {
+                    console.error('Lỗi khi tải dữ liệu:', error);
+                    showError('Có lỗi xảy ra khi tải dữ liệu. Vui lòng thử lại sau.');
+                    hideLoading();
+                });
+        }
+
+        function processData(data) {
+            const tableBody = document.getElementById('tableBody');
+            tableBody.innerHTML = '';
+
+            const filteredData = data.filter(item => item.id_thung && item.ten_thung);
+
+            const groupedData = {};
+            filteredData.forEach(item => {
+                if (!groupedData[item.id_thung]) {
+                    groupedData[item.id_thung] = {
+                        details: [],
+                        ngay_nhan: item.ngay_nhan
+                    };
+                }
+                groupedData[item.id_thung].details.push(item.ten_thung);
+            });
+
+            filteredData.forEach((item, index) => {
+                const row = tableBody.insertRow();
+                const cellSTT = row.insertCell(0);
+                const cellDetailName = row.insertCell(1);
+                const cellBoxNumber = row.insertCell(2);
+                const cellQRCode = row.insertCell(3);
+                const cellAction = row.insertCell(4);
+
+                cellSTT.textContent = index + 1;
+                cellDetailName.textContent = item.ten_thung;
+                cellBoxNumber.textContent = item.id_thung;
+
+                const qrCodeDiv = document.createElement('div');
+                qrCodeDiv.className = 'qr-code';
+                cellQRCode.appendChild(qrCodeDiv);
+
+                const qrContent = `${item.ngay_nhan} | ${item.id_thung} | ${groupedData[item.id_thung].details.join(', ')}`;
+
+                new QRCode(qrCodeDiv, {
+                    text: qrContent,
+                    width: 80,
+                    height: 80
+                });
+
+                const printButton = document.createElement('button');
+                printButton.textContent = 'In';
+                printButton.className = 'btn btn-primary btn-sm';
+                printButton.onclick = () => printLabel(item, groupedData[item.id_thung].details);
+                cellAction.appendChild(printButton);
+            });
+
+            $('#dataTable').DataTable({
+                language: {
+                        url: 'https://cdn.datatables.net/plug-ins/1.11.5/i18n/vi.json'
+                    },
+            });
+            document.getElementById('dataTable').style.display = 'table';
+        }
+
+        function printLabel(item, allDetails) {
+            const printArea = document.getElementById('printArea');
+            printArea.innerHTML = '';
+
+            const printLabel = document.createElement('div');
+            printLabel.className = 'print-label';
+
+            const printLabelQr = document.createElement('div');
+            printLabelQr.className = 'print-label-qr';
+            printLabelQr.id = 'printQRCode';
+
+            const printLabelInfo = document.createElement('div');
+            printLabelInfo.className = 'print-label-info';
+
+            const labelInfoText = document.createElement('div');
+            labelInfoText.textContent = item.id_thung;
+
+            printLabelInfo.appendChild(labelInfoText);
+            printLabel.appendChild(printLabelQr);
+            printLabel.appendChild(printLabelInfo);
+            printArea.appendChild(printLabel);
+
+            const qrContent = `${item.ngay_nhan} | ${item.id_thung} | ${allDetails.join(', ')}`;
+            new QRCode(document.getElementById("printQRCode"), {
+                text: qrContent,
+                width: 72,
+                height: 72,
+                correctLevel: QRCode.CorrectLevel.H
+            });
+
+            setTimeout(() => {
+                window.print();
+            }, 500);
+        }
+
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('dataTable').style.display = 'none';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        window.onload = loadData;
+    </script>
+</body>
+
+</html>
